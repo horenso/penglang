@@ -4,8 +4,9 @@ use nom::character::complete::{char, i64, multispace0};
 use nom::combinator::{map, opt, value};
 use nom::sequence::{delimited, preceded};
 use nom::IResult;
+use queues::{IsQueue, Queue};
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Token {
     Int(i64),
     String(String),
@@ -13,21 +14,26 @@ pub enum Token {
     Sub,
     Mul,
     Div,
+    Power,
     LParen,
     RParen,
 }
 
-pub fn lex(input: &str) -> IResult<&str, Vec<Token>> {
-    let mut tokens = Vec::new();
+pub fn lex(input: &str) -> Result<Queue<Token>, String> {
+    let mut tokens = Queue::new();
     let mut remaining_input = input;
 
     while !remaining_input.is_empty() {
-        let (new_remaining_input, token) = lex_next(remaining_input)?;
-        tokens.push(token);
-        remaining_input = new_remaining_input;
+        match lex_next(remaining_input) {
+            IResult::Ok((new_remaining_input, token)) => {
+                tokens.add(token).unwrap();
+                remaining_input = new_remaining_input;
+            }
+            IResult::Err(error) => return Err(error.to_string()),
+        }
     }
 
-    Ok((remaining_input, tokens))
+    Ok(tokens)
 }
 
 fn lex_next(input: &str) -> IResult<&str, Token> {
@@ -35,6 +41,7 @@ fn lex_next(input: &str) -> IResult<&str, Token> {
     let parse_sub = map(char('-'), |_| Token::Sub);
     let parse_mul = map(char('*'), |_| Token::Mul);
     let parse_div = map(char('/'), |_| Token::Div);
+    let parse_power = map(tag("**"), |_| Token::Power);
     let parse_lparen = map(char('('), |_| Token::LParen);
     let parse_rparen = map(char(')'), |_| Token::RParen);
 
@@ -43,6 +50,7 @@ fn lex_next(input: &str) -> IResult<&str, Token> {
         alt((
             parse_add,
             parse_sub,
+            parse_power,
             parse_mul,
             parse_div,
             parse_lparen,
@@ -74,20 +82,23 @@ fn parse_string_literal(input: &str) -> IResult<&str, Token> {
 
 #[cfg(test)]
 mod tests {
+    use queues::queue;
+
     use super::*;
 
     #[test]
     fn test_lexer() {
-        let (rest, parsed) = lex(" ( 1 + 2 ) \"wow\" ").unwrap();
-        let expected = vec![
+        let mut parsed = lex(" ( 1 + 2 ) \"wow\" ").unwrap();
+        let mut expected = queue![
             Token::LParen,
             Token::Int(1),
             Token::Add,
             Token::Int(2),
             Token::RParen,
-            Token::String("wow".to_owned()),
+            Token::String("wow".to_owned())
         ];
-        assert_eq!(expected, parsed);
-        assert!(rest.is_empty());
+        while parsed.size() > 0 || expected.size() > 0 {
+            assert_eq!(parsed.remove().unwrap(), expected.remove().unwrap());
+        }
     }
 }

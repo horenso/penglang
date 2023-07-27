@@ -1,62 +1,99 @@
-use nom::branch::alt;
-use nom::character::complete::char;
-use nom::combinator::map;
-use nom::sequence::{delimited, preceded};
-use nom::IResult;
+use queues::{IsQueue, Queue};
 
-// E -> T {+|- T}*
-// T -> F {*|/ F}*
-// F -> num
-//    | (E)
+use crate::{expression::Expression, lexer::Token};
 
-#[derive(Debug, PartialEq)]
-pub enum Expression {
-    Number(i64),
-    Add(Box<Expression>, Box<Expression>),
-    Sub(Box<Expression>, Box<Expression>),
-    Mul(Box<Expression>, Box<Expression>),
-    Div(Box<Expression>, Box<Expression>),
+pub fn parse(tokens: Queue<Token>) -> Result<Expression, String> {
+    let mut parser = Parser::new(tokens);
+    parser.parse_expression()
 }
 
-// pub fn parse_factor(input: &str) -> IResult<&str, Expression> {
-//     alt((parse_number, parse_parenthesized_expression));
-// }
+struct Parser {
+    tokens: Queue<Token>,
+}
 
-// pub fn parse_expression(input: &str) -> IResult<&str, Expression> {
-//     parse_term(input)
-// }
+impl Parser {
+    pub fn new(tokens: Queue<Token>) -> Parser {
+        Parser { tokens }
+    }
 
-// fn parse_term(input: &str) -> IResult<&str, Expression> {
-//     let parse_factor =
+    fn peek(&self) -> Option<Token> {
+        self.tokens.peek().ok()
+    }
 
-//     let parse_mul = map(preceded(char('*'), parse_factor), |expr| {
-//         Expression::Mul(Box::new(Expression::Number(0)), Box::new(expr))
-//     });
-//     let parse_div = map(preceded(char('/'), parse_factor), |expr| {
-//         Expression::Div(Box::new(Expression::Number(0)), Box::new(expr))
-//     });
+    fn eat(&mut self) -> Option<Token> {
+        self.tokens.remove().ok()
+    }
 
-//     parse_factor(input).and_then(|(rest, init_expr)| {
-//         alt((
-//             map(parse_mul, |expr| {
-//                 Expression::Mul(Box::new(init_expr.clone()), Box::new(expr))
-//             }),
-//             map(parse_div, |expr| {
-//                 Expression::Div(Box::new(init_expr.clone()), Box::new(expr))
-//             }),
-//             |input| Ok((input, init_expr)),
-//         ))(rest)
-//     })
-// }
+    // E -> T {'+' | '-' T}*
+    fn parse_expression(&mut self) -> Result<Expression, String> {
+        let mut term = self.parse_term()?;
+        while let Option::Some(next) = self.peek() {
+            match next {
+                Token::Add => {
+                    self.eat();
+                    term = Expression::Add(Box::new(term), Box::new(self.parse_term()?))
+                }
+                Token::Sub => {
+                    self.eat();
+                    term = Expression::Sub(Box::new(term), Box::new(self.parse_term()?))
+                }
+                _ => break,
+            }
+        }
+        Ok(term)
+    }
 
-// fn parse_number(input: &str) -> IResult<&str, Expression> {
-//     let (rest, token) = nom::character::complete::digit1(input)?;
-//     let num = token.parse::<i64>().unwrap();
-//     Ok((rest, Expression::Number(num)))
-// }
+    // T -> F {'*' | '/' F}*
+    fn parse_term(&mut self) -> Result<Expression, String> {
+        let mut factor = self.parse_factor()?;
+        while let Option::Some(next) = self.peek() {
+            match next {
+                Token::Mul => {
+                    self.eat();
+                    factor = Expression::Mul(Box::new(factor), Box::new(self.parse_factor()?))
+                }
+                Token::Div => {
+                    self.eat();
+                    factor = Expression::Div(Box::new(factor), Box::new(self.parse_factor()?))
+                }
+                _ => break,
+            }
+        }
+        Ok(factor)
+    }
 
-// fn parse_parenthesized_expression(input: &str) -> IResult<&str, Expression> {
-//     let (rest, expression) = delimited(char('('), parse_expression)(input)?;
-//     let (rest, _) = char(')')(rest)?;
-//     Ok((rest, expression))
-// }
+    // F -> A {'**' A}*
+    // ** is right-associative
+    fn parse_factor(&mut self) -> Result<Expression, String> {
+        let mut factor = self.parse_atom()?;
+        while let Option::Some(next) = self.peek() {
+            if next == Token::Power {
+                self.eat();
+                let exponent = self.parse_factor()?;
+                factor = Expression::Power(Box::new(factor), Box::new(exponent));
+            } else {
+                break;
+            }
+        }
+        Ok(factor)
+    }
+
+    // A -> Token::Int | (E)
+    fn parse_atom(&mut self) -> Result<Expression, String> {
+        if let Some(next) = self.eat() {
+            match next {
+                Token::LParen => {
+                    let expression = self.parse_expression()?;
+                    match self.eat() {
+                        Some(Token::RParen) => Ok(expression),
+                        _ => Err(String::from("Expected closing ')'")),
+                    }
+                }
+                Token::Int(val) => Ok(Expression::Int(val.clone())),
+                _ => Err(String::from("Expected '(' or int")),
+            }
+        } else {
+            Err(String::from("Empty Expression"))
+        }
+    }
+}
